@@ -31,8 +31,9 @@ cd src
 python run_pipeline.py --plots ../config/test_plots.csv --start 2026-01-01 --end 2026-08-01
 ```
 
-Outputs land in `output/`: one CSV + one PNG chart per plot, plus a combined
-`all_plots_timeseries.csv`.
+Outputs land in `output/`: one CSV + one PNG chart per plot, a combined
+`all_plots_timeseries.csv`, and a `crop_summary.csv` with the detected crop type, an
+estimated planting date, and current crop age per plot (see below).
 
 ## 4. Swap in real farmer data
 
@@ -50,6 +51,35 @@ GeoJSON polygons you can convert into the `wkt_polygon` column.
 - `vv_db_mean` / `vh_db_mean`: radar backscatter in dB — fills the gaps between usable optical
   passes and independently tracks crop-stage timing (rice's flood/transplant signature shows
   up clearly in VV)
+
+## Crop type & age (`crop_summary.csv`)
+
+`src/crop_classifier.py` distinguishes **rice vs. corn** and estimates a planting date
+and current age per plot from the NDVI/VV time series. This is a heuristic
+phenology-signature matcher, not a trained model -- there's no local ground truth to
+train one against yet:
+
+- **Rice**: detected from the SAR flood/transplant signature -- a sharp VV backscatter
+  dip at flooding (standing water reflects specularly) while NDVI is still low, followed
+  by a rebound as the canopy fills in. Planting date = the date of that VV dip. This is
+  the strongest signal here since it doesn't depend on cloud-free optical passes.
+- **Corn**: no flood dip, but a fast NDVI rise off a bare-soil baseline (canopy closes
+  quicker than rice's post-transplant crawl). Planting date = NDVI green-up onset minus
+  a ~8-day emergence lag.
+- If neither pattern is found -- e.g. the crop was already established before `--start`,
+  or cloud/gap coverage is too sparse -- the row comes back `unknown` with a `notes`
+  explanation instead of a guessed date.
+
+`crop_confidence` is a strength-of-match label (`high`/`medium`/`low`), not a
+statistical probability. Treat it as a lead to check in the field, especially until it's
+validated against plots with a known planting date. `--asof YYYY-MM-DD` fixes the "today"
+used for age math (defaults to the real today) -- useful for reproducible runs.
+
+Sanity-checked against synthetic rice/corn curves (no live imagery needed):
+```bash
+cd src
+python test_crop_classifier.py
+```
 
 ## Known limits (see the feasibility study)
 

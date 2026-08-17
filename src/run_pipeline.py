@@ -8,11 +8,13 @@ Requires SH_CLIENT_ID / SH_CLIENT_SECRET in a .env file (see .env.example) from 
 OAuth client created at https://dataspace.copernicus.eu -> Dashboard -> User Settings.
 """
 import argparse
+from datetime import date
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from crop_classifier import classify_and_estimate
 from ndvi_pull import pull_s2_timeseries
 from sar_pull import pull_s1_timeseries
 
@@ -66,13 +68,20 @@ def main():
     parser.add_argument("--start", required=True, help="YYYY-MM-DD")
     parser.add_argument("--end", required=True, help="YYYY-MM-DD")
     parser.add_argument("--outdir", default=str(OUTPUT_DIR))
+    parser.add_argument(
+        "--asof", default=None,
+        help="YYYY-MM-DD to compute crop age as of (default: today). Mainly useful for "
+             "reproducible test runs against a fixed end date.",
+    )
     args = parser.parse_args()
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+    as_of = date.fromisoformat(args.asof) if args.asof else date.today()
 
     plots = pd.read_csv(args.plots)
     all_rows = []
+    crop_rows = []
 
     for _, row in plots.iterrows():
         df = process_plot(row, args.start, args.end)
@@ -81,9 +90,25 @@ def main():
             plot_timeseries(row.plot_id, row.label, df, outdir)
         all_rows.append(df)
 
+        estimate = classify_and_estimate(df, as_of=as_of)
+        print(f"[{row.plot_id}] detected: {estimate.crop_type} "
+              f"({estimate.crop_confidence} confidence) -- {estimate.notes}")
+        crop_rows.append({
+            "plot_id": row.plot_id,
+            "label": getattr(row, "label", None),
+            "region": getattr(row, "region", None),
+            "crop_declared": getattr(row, "crop", None),
+            **estimate.as_row(),
+        })
+
     combined = pd.concat(all_rows, ignore_index=True)
     combined.to_csv(outdir / "all_plots_timeseries.csv", index=False)
+
+    crop_summary = pd.DataFrame(crop_rows)
+    crop_summary.to_csv(outdir / "crop_summary.csv", index=False)
+
     print(f"\nDone. {len(plots)} plot(s) processed. Combined CSV: {outdir / 'all_plots_timeseries.csv'}")
+    print(f"Crop/age summary: {outdir / 'crop_summary.csv'}")
 
 
 if __name__ == "__main__":
