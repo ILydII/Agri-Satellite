@@ -1,0 +1,2 @@
+plot_id,label,crop,region,area_ha_approx,wkt_polygon,last_purchase_date,purchase_notes
+F-001,farmer-name-or-code,rice,,,"POLYGON((lon lat, lon lat, lon lat, lon lat, lon lat))",2026-06-15,"e.g. buys on tempo/credit; pays after side-crop harvest"

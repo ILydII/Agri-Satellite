@@ -1,0 +1,4 @@
+plot_id,label,crop,region,area_ha_approx,wkt_polygon,note
+TEST-01,synthetic-plot-1,rice,Karawang West Java,0.25,"POLYGON((107.29977 -6.21023, 107.30023 -6.21023, 107.30023 -6.20977, 107.29977 -6.20977, 107.29977 -6.21023))","PLACEHOLDER - not a real farmer; for pipeline testing only"
+TEST-02,synthetic-plot-2,rice,Karawang West Java,0.25,"POLYGON((107.31477 -6.22523, 107.31523 -6.22523, 107.31523 -6.22477, 107.31477 -6.22477, 107.31477 -6.22523))","PLACEHOLDER - not a real farmer; for pipeline testing only"
+TEST-03,synthetic-plot-3,rice,Karawang West Java,0.25,"POLYGON((107.28977 -6.24023, 107.29023 -6.24023, 107.29023 -6.23977, 107.28977 -6.23977, 107.28977 -6.24023))","PLACEHOLDER - not a real farmer; for pipeline testing only"
