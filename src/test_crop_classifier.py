@@ -113,6 +113,20 @@ def make_two_cycle_corn_series(n_days=300):
     return pd.DataFrame(rows)
 
 
+def make_ocean_series(n_days=150):
+    """Permanent water: low, noisy VV with occasional wind/wave-driven rebounds that can
+    fake a flood dip's shape, but NDVI never reaches real canopy levels. Regression fixture
+    for a real bug found via the Jember pixel-level run: ocean tiles were showing up as 76%
+    "rice" because nothing checked that vegetation actually grew after the VV dip."""
+    dates = _dates(n_days)
+    rows = []
+    for i, d in enumerate(dates):
+        vv = -19.0 + (4.0 if i % 5 == 0 else 0.0) + np.random.normal(0, 0.5)  # periodic "rebound"
+        ndvi = -0.05 + np.random.normal(0, 0.03)  # water: near-zero/negative, never rises
+        rows.append({"date": pd.Timestamp(d), "ndvi_mean": ndvi, "vv_db_mean": vv})
+    return pd.DataFrame(rows)
+
+
 def run():
     np.random.seed(0)
 
@@ -167,6 +181,11 @@ def run():
         f"expected the SECOND cycle's planting (~day 118), got day {days_since_start} "
         f"-- looks like it locked onto the first (stale) cycle instead"
     )
+
+    ocean_df = make_ocean_series()
+    est = classify_and_estimate(ocean_df, as_of=date(2026, 1, 1) + timedelta(days=100))
+    print("ocean fixture ->", est)
+    assert est.crop_type != "rice", f"ocean misclassified as rice: {est}"
 
     print("\nAll crop_classifier sanity checks passed.")
 

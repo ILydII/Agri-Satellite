@@ -29,6 +29,7 @@ import pandas as pd
 FLOOD_VV_DB = -16.0          # VV at/below this, alongside low NDVI, reads as standing water
 FLOOD_NDVI_MAX = 0.30        # NDVI must still be low (bare/flooded) at the VV minimum
 FLOOD_REBOUND_DB = 3.0       # minimum dB rebound after the dip to confirm it's flooding, not noise
+RICE_POST_DIP_NDVI_MIN = 0.40  # real canopy must follow the dip -- permanent water never shows this
 GREEN_UP_NDVI = 0.30         # NDVI threshold marking crop emergence
 MIN_BASELINE_NDVI = 0.25     # pre-green-up baseline must sit below this to count as bare soil
 CORN_STEEP_SLOPE = 0.012     # NDVI units/day; corn closes canopy faster than post-transplant rice
@@ -104,6 +105,13 @@ def _find_flood_dip(dates: pd.Series, ndvi: pd.Series, vv: pd.Series):
         # NDVI near the dip date should still be low (bare/flooded), when we have optical coverage.
         ndvi_near = ndvi.iloc[max(i - 2, 0): i + 3]
         if ndvi_near.notna().any() and ndvi_near.dropna().mean() > FLOOD_NDVI_MAX:
+            continue
+        # A real paddy grows a canopy after flooding; permanent water (ocean, lakes, rivers)
+        # never does, but can otherwise trivially fake the dip+rebound VV pattern from
+        # wave/wind-driven backscatter noise. Require NDVI to actually reach vegetation
+        # levels at some point after the dip to rule that out.
+        ndvi_after = ndvi.iloc[i:]
+        if ndvi_after.notna().sum() >= 2 and ndvi_after.max() < RICE_POST_DIP_NDVI_MIN:
             continue
         return dates.iloc[i], rebound
     return None
