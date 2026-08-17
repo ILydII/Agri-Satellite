@@ -20,6 +20,18 @@ def _load_evalscript(filename: str) -> str:
     return (EVALSCRIPT_DIR / filename).read_text()
 
 
+def _safe_float(value) -> float:
+    """The Statistical API returns the JSON string "NaN" (not null) for stats computed over
+    a fully cloud/dataMask-invalid bin, which otherwise silently produces an object-dtype
+    column mixing floats and strings -- breaking both plotting and any NaN-based filtering."""
+    if value is None:
+        return float("nan")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def run_statistical_request(
     evalscript_filename: str,
     data_collection: DataCollection,
@@ -45,7 +57,7 @@ def run_statistical_request(
                 data_collection,
                 mosaicking_order=(
                     MosaickingOrder.LEAST_CC
-                    if data_collection == DataCollection.SENTINEL2_L2A
+                    if data_collection.api_id == DataCollection.SENTINEL2_L2A.api_id
                     else None
                 ),
             )
@@ -62,10 +74,12 @@ def run_statistical_request(
         outputs = interval_result.get("outputs", {})
         for output_id in output_ids:
             band_stats = outputs.get(output_id, {}).get("bands", {}).get("B0", {}).get("stats", {})
-            row[f"{output_id}_mean"] = band_stats.get("mean")
-            row[f"{output_id}_stdev"] = band_stats.get("stDev")
-            row[f"{output_id}_valid_px"] = band_stats.get("sampleCount")
-            row[f"{output_id}_nodata_px"] = band_stats.get("noDataCount")
+            sample_count = band_stats.get("sampleCount") or 0
+            nodata_count = band_stats.get("noDataCount") or 0
+            row[f"{output_id}_mean"] = _safe_float(band_stats.get("mean"))
+            row[f"{output_id}_stdev"] = _safe_float(band_stats.get("stDev"))
+            row[f"{output_id}_valid_px"] = sample_count - nodata_count
+            row[f"{output_id}_nodata_px"] = nodata_count
         rows.append(row)
 
     df = pd.DataFrame(rows)

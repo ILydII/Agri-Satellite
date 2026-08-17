@@ -105,6 +105,7 @@ def main():
     combined.to_csv(outdir / "all_plots_timeseries.csv", index=False)
 
     crop_summary = pd.DataFrame(crop_rows)
+    crop_summary["crop_age_days"] = crop_summary["crop_age_days"].astype("Int64")
     crop_summary.to_csv(outdir / "crop_summary.csv", index=False)
 
     print(f"\nDone. {len(plots)} plot(s) processed. Combined CSV: {outdir / 'all_plots_timeseries.csv'}")
