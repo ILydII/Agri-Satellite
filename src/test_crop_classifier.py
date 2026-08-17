@@ -62,6 +62,31 @@ def make_corn_series(planting_day=15, n_days=150):
     return pd.DataFrame(rows)
 
 
+def make_multi_cycle_series(n_days=500):
+    """A prior crop already at peak when the record starts, harvested/fallow around day 110-150,
+    then a second, later planting green-up around day 160 -- the trough that should anchor the
+    age estimate sits in the MIDDLE of the record, not at its start. Regression fixture for the
+    bug where a fixed first-20%-of-series baseline missed a mid-record replanting entirely."""
+    dates = _dates(n_days)
+    rows = []
+    for d in dates:
+        t = (d - dates[0]).days
+        if t < 100:
+            ndvi = 0.72 + np.random.normal(0, 0.02)          # prior crop already mature
+        elif t < 150:
+            ndvi = 0.72 - (t - 100) / 50.0 * 0.55 + np.random.normal(0, 0.02)  # senescence -> bare
+        elif t < 170:
+            ndvi = 0.17 + np.random.normal(0, 0.02)          # fallow / bare soil
+        else:
+            days_since = t - 170
+            ndvi = 0.17 + min(days_since / 25.0, 1.0) * 0.6 + np.random.normal(0, 0.02)
+            if days_since > 70:
+                ndvi -= (days_since - 70) * 0.005
+        vv = -10.0 + np.random.normal(0, 0.3)  # flat -- no flood signature anywhere
+        rows.append({"date": pd.Timestamp(d), "ndvi_mean": ndvi, "vv_db_mean": vv})
+    return pd.DataFrame(rows)
+
+
 def run():
     np.random.seed(0)
 
@@ -98,6 +123,13 @@ def run():
     print("already-grown fixture ->", est)
     assert est.crop_type == "unknown"
     assert est.planting_date_est is None
+
+    multi_cycle_df = make_multi_cycle_series()
+    est = classify_and_estimate(multi_cycle_df, as_of=date(2026, 1, 1) + timedelta(days=250))
+    print("multi-cycle fixture ->", est)
+    assert est.crop_type == "corn", f"expected corn (mid-record replant), got {est.crop_type}"
+    planted = date.fromisoformat(est.planting_date_est)
+    assert abs((planted - (date(2026, 1, 1) + timedelta(days=171))).days) <= 8, f"planting date off: {planted}"
 
     print("\nAll crop_classifier sanity checks passed.")
 

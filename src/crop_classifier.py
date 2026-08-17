@@ -87,31 +87,42 @@ def _find_flood_dip(dates: pd.Series, ndvi: pd.Series, vv: pd.Series):
     return dates.loc[idx_min], (after.iloc[1:].max() - dip_value)
 
 
+GREEN_UP_LOOKBACK_DAYS = 150  # how far back to search for the bare-soil trough before a rise
+
+
 def _find_green_up(dates: pd.Series, ndvi: pd.Series):
     """Returns (green_up_date, rise_slope_per_day) marking the earliest sustained NDVI rise
-    off a bare-soil baseline."""
+    off a bare-soil baseline.
+
+    The baseline trough is searched for in a bounded lookback window immediately before each
+    candidate crossing -- NOT a single fixed window at the start of the series. Over a record
+    spanning more than one crop cycle (e.g. extending --start back a year to catch an earlier
+    planting), the real pre-rise trough can sit anywhere in the middle of the series, not at
+    its start; a fixed "first 20%" baseline misses it entirely on multi-cycle records.
+    """
     valid = ndvi.notna()
     if valid.sum() < 4:
         return None
     ndvi_s = _smooth(ndvi)
-
-    baseline_window = max(int(len(ndvi_s) * 0.2), 3)
-    baseline = ndvi_s.iloc[:baseline_window].median()
-    if baseline > MIN_BASELINE_NDVI:
-        return None  # already vegetated at query start -- can't see the onset
-
     above = ndvi_s >= GREEN_UP_NDVI
-    still_bare = ndvi_s <= (baseline + 0.05)
-    for i in range(baseline_window, len(ndvi_s) - 1):
-        if above.iloc[i] and above.iloc[i + 1]:
-            green_up_date = dates.iloc[i]
-            # Measure the rise itself (last still-bare point -> crossing point), not diluted
-            # by however long the fallow baseline period happened to last.
-            bare_idx = [j for j in range(i) if still_bare.iloc[j]]
-            j = bare_idx[-1] if bare_idx else max(baseline_window - 1, 0)
-            days_elapsed = max((green_up_date - dates.iloc[j]).days, 1)
-            slope = (ndvi_s.iloc[i] - ndvi_s.iloc[j]) / days_elapsed
-            return green_up_date, slope
+    bare = ndvi_s <= MIN_BASELINE_NDVI  # absolute bare-soil test, not relative to a computed baseline
+
+    for i in range(1, len(ndvi_s) - 1):
+        if not (above.iloc[i] and above.iloc[i + 1]):
+            continue
+        crossing_date = dates.iloc[i]
+        lookback_start = crossing_date - pd.Timedelta(days=GREEN_UP_LOOKBACK_DAYS)
+        # Last bare-soil point strictly before the crossing, within the lookback window --
+        # this measures the actual rise rate, not diluted by an older, unrelated low point.
+        bare_before = [j for j in range(i) if bare.iloc[j] and dates.iloc[j] >= lookback_start]
+        if not bare_before:
+            continue
+        j = bare_before[-1]
+        baseline = ndvi_s.iloc[j]
+        baseline_date = dates.iloc[j]
+        days_elapsed = max((crossing_date - baseline_date).days, 1)
+        slope = (ndvi_s.iloc[i] - baseline) / days_elapsed
+        return crossing_date, slope
     return None
 
 
