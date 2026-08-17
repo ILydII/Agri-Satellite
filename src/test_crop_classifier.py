@@ -87,6 +87,32 @@ def make_multi_cycle_series(n_days=500):
     return pd.DataFrame(rows)
 
 
+def make_two_cycle_corn_series(n_days=300):
+    """Two genuine corn cycles in one record (planted ~day 5, then replanted ~day 118 after a
+    real fallow gap). Regression fixture for the "most recent, not oldest" preference -- with
+    two valid cycles both fully visible, the classifier should report the second one."""
+    dates = _dates(n_days)
+
+    def ndvi_for_cycle(days_since_emergence):
+        val = 0.18 + min(max(days_since_emergence, 0) / 25.0, 1.0) * 0.62
+        if days_since_emergence > 55:
+            val -= (days_since_emergence - 55) * 0.008
+        return max(val, 0.12)
+
+    rows = []
+    for d in dates:
+        t = (d - dates[0]).days
+        if t < 90:
+            ndvi = ndvi_for_cycle(t - 13) + np.random.normal(0, 0.02)   # cycle A: emergence ~day 13
+        elif t < 118:
+            ndvi = 0.16 + np.random.normal(0, 0.02)                     # fallow gap between cycles
+        else:
+            ndvi = ndvi_for_cycle(t - 131) + np.random.normal(0, 0.02)  # cycle B: emergence ~day 131
+        vv = -10.0 + np.random.normal(0, 0.3)
+        rows.append({"date": pd.Timestamp(d), "ndvi_mean": ndvi, "vv_db_mean": vv})
+    return pd.DataFrame(rows)
+
+
 def run():
     np.random.seed(0)
 
@@ -130,6 +156,17 @@ def run():
     assert est.crop_type == "corn", f"expected corn (mid-record replant), got {est.crop_type}"
     planted = date.fromisoformat(est.planting_date_est)
     assert abs((planted - (date(2026, 1, 1) + timedelta(days=171))).days) <= 8, f"planting date off: {planted}"
+
+    two_cycle_df = make_two_cycle_corn_series()
+    est = classify_and_estimate(two_cycle_df, as_of=date(2026, 1, 1) + timedelta(days=200))
+    print("two-cycle fixture ->", est)
+    assert est.crop_type == "corn", f"expected corn, got {est.crop_type}"
+    planted = date.fromisoformat(est.planting_date_est)
+    days_since_start = (planted - date(2026, 1, 1)).days
+    assert 100 <= days_since_start <= 140, (
+        f"expected the SECOND cycle's planting (~day 118), got day {days_since_start} "
+        f"-- looks like it locked onto the first (stale) cycle instead"
+    )
 
     print("\nAll crop_classifier sanity checks passed.")
 

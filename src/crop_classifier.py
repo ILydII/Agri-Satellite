@@ -62,43 +62,75 @@ def _smooth(series: pd.Series) -> pd.Series:
 
 
 def _find_flood_dip(dates: pd.Series, ndvi: pd.Series, vv: pd.Series):
-    """Returns (dip_date, dip_depth_db) if a rice-like flood/transplant signature is found."""
+    """Returns (dip_date, dip_rebound_db) for the most recent rice-like flood/transplant
+    signature found.
+
+    Groups the series into contiguous below-threshold episodes and takes each episode's
+    deepest point as its candidate dip date -- NOT a per-point scan. VV rises gradually
+    over weeks after transplant (not an instant step), so a per-point scan picking "the
+    most recent point still under threshold" locks onto the tail end of the recovery
+    rather than the actual dip, overstating the transplant date by however long the
+    rebound took. Episodes are checked most-recent-first so a double-cropped field
+    reports the CURRENT cycle's transplant date, not a stale earlier one.
+    """
     valid = vv.notna()
     if valid.sum() < 4:
         return None
     vv_s = _smooth(vv)
-    idx_min = vv_s.idxmin()
-    dip_value = vv_s.loc[idx_min]
-    if dip_value > FLOOD_VV_DB:
-        return None
+    below = vv_s <= FLOOD_VV_DB
 
-    after = vv_s.loc[idx_min:]
-    if len(after) < 3:
-        return None
-    rebound = after.iloc[1:].max() - dip_value
-    if rebound < FLOOD_REBOUND_DB:
-        return None
+    episodes = []
+    start = None
+    for i in range(len(vv_s)):
+        if below.iloc[i] and start is None:
+            start = i
+        elif not below.iloc[i] and start is not None:
+            episodes.append((start, i - 1))
+            start = None
+    if start is not None:
+        episodes.append((start, len(vv_s) - 1))
 
-    # NDVI near the dip date should still be low (bare/flooded), when we have optical coverage.
-    ndvi_near = ndvi.loc[max(idx_min - 2, ndvi.index.min()):min(idx_min + 2, ndvi.index.max())]
-    if ndvi_near.notna().any() and ndvi_near.dropna().mean() > FLOOD_NDVI_MAX:
-        return None
+    for ep_start, ep_end in reversed(episodes):
+        local = vv_s.iloc[ep_start:ep_end + 1]
+        i = local.idxmin()
+        dip_value = vv_s.iloc[i]
 
-    return dates.loc[idx_min], (after.iloc[1:].max() - dip_value)
+        after = vv_s.iloc[ep_end + 1:]
+        if len(after) < 2:
+            continue
+        rebound = after.max() - dip_value
+        if rebound < FLOOD_REBOUND_DB:
+            continue
+        # NDVI near the dip date should still be low (bare/flooded), when we have optical coverage.
+        ndvi_near = ndvi.iloc[max(i - 2, 0): i + 3]
+        if ndvi_near.notna().any() and ndvi_near.dropna().mean() > FLOOD_NDVI_MAX:
+            continue
+        return dates.iloc[i], rebound
+    return None
 
 
 GREEN_UP_LOOKBACK_DAYS = 150  # how far back to search for the bare-soil trough before a rise
 
 
 def _find_green_up(dates: pd.Series, ndvi: pd.Series):
-    """Returns (green_up_date, rise_slope_per_day) marking the earliest sustained NDVI rise
+    """Returns (green_up_date, rise_slope_per_day) marking the most recent sustained NDVI rise
     off a bare-soil baseline.
 
+    Anchored to genuine "above threshold" EPISODE STARTS, not any index where two consecutive
+    points happen to be above threshold -- once NDVI has risen, every later point on the same
+    plateau redundantly re-satisfies that pairwise check too. Scanning those naively from the
+    end would just grab the last point of the plateau and pair it with the original bare
+    baseline months earlier, producing a wildly diluted (near-zero) slope instead of the real
+    one. Episode boundaries fix that structurally: each episode is one rise event.
+
     The baseline trough is searched for in a bounded lookback window immediately before each
-    candidate crossing -- NOT a single fixed window at the start of the series. Over a record
+    episode's start -- NOT a single fixed window at the start of the series. Over a record
     spanning more than one crop cycle (e.g. extending --start back a year to catch an earlier
     planting), the real pre-rise trough can sit anywhere in the middle of the series, not at
     its start; a fixed "first 20%" baseline misses it entirely on multi-cycle records.
+
+    Episodes are checked most-recent-first so a double-cropped field reports the CURRENT
+    cycle's green-up, not a stale earlier one.
     """
     valid = ndvi.notna()
     if valid.sum() < 4:
@@ -107,21 +139,32 @@ def _find_green_up(dates: pd.Series, ndvi: pd.Series):
     above = ndvi_s >= GREEN_UP_NDVI
     bare = ndvi_s <= MIN_BASELINE_NDVI  # absolute bare-soil test, not relative to a computed baseline
 
-    for i in range(1, len(ndvi_s) - 1):
-        if not (above.iloc[i] and above.iloc[i + 1]):
-            continue
-        crossing_date = dates.iloc[i]
+    episodes = []
+    start = None
+    for i in range(len(ndvi_s)):
+        if above.iloc[i] and start is None:
+            start = i
+        elif not above.iloc[i] and start is not None:
+            episodes.append((start, i - 1))
+            start = None
+    if start is not None:
+        episodes.append((start, len(ndvi_s) - 1))
+
+    for ep_start, ep_end in reversed(episodes):
+        if ep_end - ep_start < 1:
+            continue  # require at least 2 sustained points, same bar as before
+        crossing_date = dates.iloc[ep_start]
         lookback_start = crossing_date - pd.Timedelta(days=GREEN_UP_LOOKBACK_DAYS)
         # Last bare-soil point strictly before the crossing, within the lookback window --
         # this measures the actual rise rate, not diluted by an older, unrelated low point.
-        bare_before = [j for j in range(i) if bare.iloc[j] and dates.iloc[j] >= lookback_start]
+        bare_before = [j for j in range(ep_start) if bare.iloc[j] and dates.iloc[j] >= lookback_start]
         if not bare_before:
             continue
         j = bare_before[-1]
         baseline = ndvi_s.iloc[j]
         baseline_date = dates.iloc[j]
         days_elapsed = max((crossing_date - baseline_date).days, 1)
-        slope = (ndvi_s.iloc[i] - baseline) / days_elapsed
+        slope = (ndvi_s.iloc[ep_start] - baseline) / days_elapsed
         return crossing_date, slope
     return None
 
